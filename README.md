@@ -1,8 +1,13 @@
 # Protein-Hunter 😈
 
-
 <p align="center">
   <img src="./protein_hunter.png" alt="Protein Hunter" width="500"/>
+</p>
+
+<p align="center" style="font-size:90%">
+  <em>
+    <strong>Note:</strong> Logo is a ChatGPT-modified version of the Netflix animation and is for illustration only.
+  </em>
 </p>
 
 > 📄 **Paper**: [Protein Hunter: exploiting structure hallucination
@@ -56,19 +61,19 @@ We have implemented two different AF3-style models in our Protein Hunter pipelin
 - **Small molecule binder design:**  
   For designing a protein binder for a small molecule (e.g. SAM), use:  
   ```
-  python boltz/protein_hunter.py --num_designs 5 --num_cycles 7 --ligand_ccd SAM --ligand_id B --gpu_id 2 --name SAM_binder --min_design_protein_length 130 --max_design_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
+  python boltz/run.py --num_designs 5 --num_cycles 7 --ligand_ccd SAM --ligand_id B --gpu_id 2 --name SAM_binder --min_design_protein_length 130 --max_design_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
   ```
 
 - **DNA/RNA PDB design:**  
   To design a protein binder for a nucleic acid (e.g. an RNA sequence), run this in Python:
   ```
-  python boltz/protein_hunter.py --num_designs 5 --num_cycles 7 --nucleic_seq AGAGAGAGA --nucleic_id B --nucleic_type rna --gpu_id 0 --name RNA_bind --min_design_protein_length 130 --max_design_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
+  python boltz/run.py --num_designs 5 --num_cycles 7 --nucleic_seq AGAGAGAGA --nucleic_id B --nucleic_type rna --gpu_id 0 --name RNA_bind --min_design_protein_length 130 --max_design_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
   ```
 
 - **Designs with multiple/heterogeneous target types:**  
   If you want to target multiple, different types of molecules (for example, a protein with a ligand and a template), run:
   ```
-  python one_shot_diff/protein_hunter.py --num_designs 5 --num_cycles 7 --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --protein_ids B --protein_msas "" --ligand_ccd SAM --ligand_id C --gpu_id 0 --name PDL1_SAM --min_design_protein_length 90 --max_design_protein_length 150 --high_iptm_threshold 0.8 --use_msa_for_af3 --plot
+  python one_shot_diff/run.py --num_designs 5 --num_cycles 7 --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --protein_ids B --protein_msas "" --ligand_ccd SAM --ligand_id C --gpu_id 0 --name PDL1_SAM --min_design_protein_length 90 --max_design_protein_length 150 --high_iptm_threshold 0.8 --use_msa_for_af3 --plot
   ```
 
 
@@ -80,7 +85,7 @@ We have implemented two different AF3-style models in our Protein Hunter pipelin
 
 
 ## 🎥 Trajectory Visualization
-We installed trajectory visualization based on LogMD
+We have implemented trajectory visualization using LogMD and py2Dmol (developed by Sergey Ovchinnikov).
 
 
 ### ProteinMPNN

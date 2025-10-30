@@ -1,24 +1,22 @@
 import os
 import sys
-import json
-import shutil
-import tempfile
-import subprocess
 import glob
 import gc
+import json
+import tempfile
+import subprocess
 from pathlib import Path
 from typing import Optional
-import pandas as pd
-import warnings
-import string
-import math
 
+import random
+import warnings
 import numpy as np
+import pandas as pd
 import torch
-from prody import parsePDB
-from pathlib import Path
+import matplotlib.pyplot as plt
 import py3Dmol
 from dataclasses import asdict, replace
+from prody import parsePDB
 
 from boltz.data.feature.featurizerv2 import Boltz2Featurizer
 from boltz.data.feature.featurizer import BoltzFeaturizer
@@ -49,11 +47,17 @@ from boltz.main import (
 from boltz.model.models.boltz2 import Boltz2
 from boltz.model.models.boltz1 import Boltz1
 
+# Existing filter
 warnings.filterwarnings("ignore", message=".*requires_grad=True.*")
+warnings.filterwarnings(
+    "ignore", 
+    message="torch.utils.checkpoint: the use_reentrant parameter should be passed explicitly.*", 
+    category=UserWarning
+)
 from utils.alphafold_utils import *
 from utils.pyrosetta_utils import *
 
-alphabet = list("XXARNDCQEGHILKMFPSTWYV-")
+alphabet = list[str]("XXARNDCQEGHILKMFPSTWYV-")
 
 chain_to_number = {
     "A": 0,
@@ -83,6 +87,22 @@ def get_cif(cif_code=""):
         )
         return f"AF-{cif_code}-F1-model_v3.cif"
 
+
+def get_CA(x):
+  xyz = []
+  with open(x,"r") as file:
+    for line in file:
+      line = line.rstrip()
+      if line[:4] == "ATOM":
+        atom = line[12:12+4].strip()
+        if atom == "CA":
+          resi = line[17:17+3]
+          resn = int(line[22:22+5])-1
+          x = float(line[30:30+8])
+          y = float(line[38:38+8])
+          z = float(line[46:46+8])
+          xyz.append([x,y,z])
+  return np.array(xyz)
 
 def np_kabsch(a, b, return_v=False):
     """Get alignment matrix for two sets of coordinates using numpy
@@ -129,6 +149,40 @@ def np_rmsd(true, pred):
     # Calculate RMSD
     return np.sqrt(np.mean(np.sum(np.square(p - q), axis=-1)) + 1e-8)
 
+def convert_cif_to_pdb(ciffile, pdbfile):
+    """
+    Convert a CIF file to PDB format, handling chain renaming and residue name truncation.
+
+    Args:
+        ciffile (str): Path to input CIF file
+        pdbfile (str): Path to output PDB file
+
+    Returns:
+        bool: True if conversion succeeds, False otherwise
+    """
+    logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.WARNING)
+
+    strucid = ciffile[:4] if len(ciffile) > 4 else "1xxx"
+
+    # Parse CIF file
+    parser = MMCIFParser(QUIET=True)
+    structure = parser.get_structure(strucid, ciffile)
+
+    # Rename chains
+    try:
+        rename_chains(structure)
+    except OutOfChainsError:
+        logging.error("Too many chains to represent in PDB format")
+        return False
+
+    # Truncate long ligand or residue names
+    sanitize_residue_names(structure)
+
+    # Write to PDB
+    io = PDBIO()
+    io.set_structure(structure)
+    io.save(pdbfile)
+    return True
 
 def convert_cif_files_to_pdb(
     results_dir, save_dir, af_dir=False, high_iptm=False, i_ptm_cutoff=0.5
@@ -278,6 +332,31 @@ def binder_binds_contacts(
         return False
     return contacted >= 2
 
+
+def sample_seq(length, all_X=False):
+    if all_X:
+        amino_acids = "X" * 200
+    else:
+        amino_acids = "ADEFGHIKLMNQRSTVWY" + "X" * 18
+    return "".join(random.choices(amino_acids, k=length))
+
+def shallow_copy_tensor_dict(d):
+    if isinstance(d, dict):
+        return {k: shallow_copy_tensor_dict(v) for k, v in d.items()}
+    elif isinstance(d, list):
+        return [shallow_copy_tensor_dict(x) for x in d]
+    elif isinstance(d, torch.Tensor):
+        return d.detach().clone()
+    else:
+        return d
+
+def smart_split(s):
+    if "," in s:
+        return [x.strip() for x in s.split(",")]
+    elif ":" in s:
+        return [x.strip() for x in s.split(":")]
+    else:
+        return [x.strip() for x in s.split()] if s else []
 
 def get_boltz_model(
     checkpoint: Optional[str] = None,
@@ -513,8 +592,6 @@ class LigandMPNNWrapper:
         model_type="protein_mpnn",
         bias_AA="",
         omit_AA="C",
-        symmetry_residues=None,
-        symmetry_weights=None,
         chains_to_design=None,
         extra_args=None,
         fix_unk=True,
@@ -560,34 +637,26 @@ class LigandMPNNWrapper:
                 cmd.extend(["--omit_AA", omit_AA])
             if bias_AA:
                 cmd.extend(["--bias_AA", bias_AA])
-            if symmetry_residues:
-                cmd.extend(["--symmetry_residues", symmetry_residues])
-                cmd.extend(["--symmetry_weights", symmetry_weights])
             if return_logits:
                 cmd.extend(["--return_logits"])
             # Add model checkpoint based on model_type
+
+            run_py_path = os.path.abspath(self.run_py)
+            BASE_DIR = os.path.dirname(run_py_path)
+            MODEL_DIR = os.path.join(BASE_DIR, "model_params")
+
             if model_type == "protein_mpnn":
-                cmd += [
-                    "--checkpoint_protein_mpnn",
-                    "./LigandMPNN/model_params/proteinmpnn_v_48_020.pt",
-                ]
+                cmd += ["--checkpoint_protein_mpnn", os.path.join(MODEL_DIR, "proteinmpnn_v_48_020.pt")]
             elif model_type == "ligand_mpnn":
-                cmd += [
-                    "--checkpoint_ligand_mpnn",
-                    "./LigandMPNN/model_params/ligandmpnn_v_32_010_25.pt",
-                ]
+                cmd += ["--checkpoint_ligand_mpnn", os.path.join(MODEL_DIR, "ligandmpnn_v_32_010_25.pt")]
             elif model_type == "soluble_mpnn":
-                cmd += [
-                    "--checkpoint_soluble_mpnn",
-                    "./LigandMPNN/model_params/solublempnn_v_48_020.pt",
-                ]
+                cmd += ["--checkpoint_soluble_mpnn", os.path.join(MODEL_DIR, "solublempnn_v_48_020.pt")]
             if chains_to_design:
                 if isinstance(chains_to_design, (list, tuple)):
                     chains_to_design = "".join(chains_to_design)
                 cmd += ["--chains_to_design", chains_to_design]
             for k, v in extra_args.items():
                 cmd += [k, str(v)]
-            print(cmd)
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             if return_logits:
@@ -603,16 +672,11 @@ class LigandMPNNWrapper:
                         break
 
                 if json_str is None:
-                    print("STDOUT:\n", result.stdout)
-                    print("STDERR:\n", result.stderr)
                     raise RuntimeError("Could not find JSON output in stdout")
 
                 try:
                     output = json.loads(json_str)
                 except json.JSONDecodeError as e:
-                    print("Failed to parse JSON:")
-                    print("STDOUT:\n", result.stdout)
-                    print("STDERR:\n", result.stderr)
                     raise RuntimeError(f"Failed to parse JSON output: {e}")
 
                 S = torch.tensor(output["S"][0])  # [L, 21]
@@ -621,8 +685,6 @@ class LigandMPNNWrapper:
                 return S, logits
 
             else:
-                print("STDOUT:\n", result.stdout)
-                print("STDERR:\n", result.stderr)
                 if result.returncode != 0:
                     raise RuntimeError(
                         f"LigandMPNN failed with code {result.returncode}"
@@ -743,7 +805,6 @@ def save_pdb(structure, coords, plddts, filename):
     with open(filename, "w") as f:
         f.write(to_pdb(structure, plddts, boltz2=True))
 
-
 def design_sequence(
     designer,
     model_type,
@@ -752,8 +813,6 @@ def design_sequence(
     omit_AA="C",
     bias_AA="",
     temperature=0.02,
-    symmetry_residues=None,
-    symmetry_weights=None,
     return_logits=False,
 ):
     seq, logits = designer.run(
@@ -763,8 +822,6 @@ def design_sequence(
         chains_to_design=chains_to_design,
         bias_AA=bias_AA,
         omit_AA=omit_AA,
-        symmetry_residues=symmetry_residues,
-        symmetry_weights=symmetry_weights,
         return_logits=return_logits,
         extra_args={
             "--temperature": temperature,
@@ -835,6 +892,98 @@ def plot_from_pdb(
     view.zoomTo()
     return view.show()
 
+
+def plot_run_metrics(run_save_dir: str, name: str, run_id: int, num_cycles: int, run_metrics: dict):
+    """Plot per-run figure to run subfolder, given run_metrics as input."""
+
+    fig, axs = plt.subplots(1, 4, figsize=(12, 3))
+    colors = ["#9B59B6", "#E94560", "#FF7F11", "#2ECC71"]
+    metrics = [
+        (
+            "iPTM",
+            [
+                run_metrics.get(f"cycle_{i}_iptm", float("nan"))
+                for i in range(num_cycles + 1)
+            ],
+            0,
+            1,
+            "{:.3f}",
+        ),
+        (
+            "pLDDT",
+            [
+                run_metrics.get(f"cycle_{i}_plddt", float("nan"))
+                for i in range(num_cycles + 1)
+            ],
+            0,
+            1,
+            "{:.1f}",
+        ),
+        (
+            "iPLDDT",
+            [
+                run_metrics.get(f"cycle_{i}_iplddt", float("nan"))
+                for i in range(num_cycles + 1)
+            ],
+            0,
+            1,
+            "{:.1f}",
+        ),
+        (
+            "Alanine Count",
+            [
+                run_metrics.get(f"cycle_{i}_alanine", float("nan"))
+                for i in range(num_cycles + 1)
+            ],
+            0,
+            max(
+                [
+                    run_metrics.get(f"cycle_{i}_alanine", 0)
+                    for i in range(num_cycles + 1)
+                ]
+            )
+            + 2,
+            "{}",
+        ),
+    ]
+    design_cycles = list(range(num_cycles + 1))
+    for ax, (label, values, ymin, ymax, fmt), color in zip(
+        axs, metrics, colors
+    ):
+        ax.plot(
+            design_cycles,
+            values,
+            "o-",
+            color=color,
+            linewidth=2,
+            markersize=6,
+            markerfacecolor="white",
+            markeredgewidth=2,
+        )
+        ax.set(
+            xlabel="Design Iteration",
+            ylabel=label,
+            title=f"{label} (Run {run_id})",
+            xticks=design_cycles,
+            ylim=(ymin, ymax),
+        )
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.spines[["top", "right"]].set_visible(False)
+        for x, y in zip(design_cycles, values):
+            ax.annotate(
+                fmt.format(y) if not pd.isnull(y) else "",
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 8),
+                ha="center",
+                fontsize=9,
+            )
+    plt.tight_layout()
+    plt.savefig(
+        f"{run_save_dir}/{name}_run_{run_id}_design_cycle_results.png", dpi=300
+    )
+    plt.show()
+    # plt.close()
 
 def calculate_holo_apo_rmsd(af_pdb_dir, af_pdb_dir_apo, binder_chain):
     """Calculate RMSD between holo and apo structures and update confidence CSV.
