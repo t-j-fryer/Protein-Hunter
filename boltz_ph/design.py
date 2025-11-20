@@ -20,6 +20,12 @@ def parse_args():
     )
     # --- Existing Arguments (omitted for brevity, keep all original args) ---
     parser.add_argument("--gpu_id", default=0, type=int)
+    parser.add_argument(
+        "--ligand_gpu_id",
+        default=None,
+        type=int,
+        help="GPU id for Ligand/ProteinMPNN (set to -1 for CPU). Defaults to --gpu_id.",
+    )
     parser.add_argument("--grad_enabled", action="store_true", default=False)
     parser.add_argument("--name", default="target_name_is_missing", type=str)
     parser.add_argument(

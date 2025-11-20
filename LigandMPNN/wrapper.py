@@ -23,6 +23,7 @@ class LigandMPNNWrapper:
         extra_args=None,
         fix_unk=True,
         return_logits=False,
+        cuda_device=None,
     ):
         """
         Unified Ligand/ProteinMPNN runner.
@@ -102,7 +103,14 @@ class LigandMPNNWrapper:
                 cmd += [k, str(v)]
 
             # --- Run subprocess safely ---
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            env = os.environ.copy()
+            if cuda_device is not None:
+                if cuda_device == -1:
+                    env["CUDA_VISIBLE_DEVICES"] = ""
+                else:
+                    env["CUDA_VISIBLE_DEVICES"] = str(cuda_device)
+
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
 
             # --- Handle logits output ---
             if return_logits:

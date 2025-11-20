@@ -295,6 +295,9 @@ class ProteinHunter_Boltz:
         # 2. Initialize Models
         self.boltz_model = self._load_boltz_model()
         self.designer = LigandMPNNWrapper("./LigandMPNN/run.py")
+        self.ligand_gpu_id = (
+            args.ligand_gpu_id if args.ligand_gpu_id is not None else args.gpu_id
+        )
 
         # 3. Setup Directories
         self.save_dir = self.data_builder.save_dir
@@ -489,7 +492,10 @@ class ProteinHunter_Boltz:
             }
 
             seq_str, logits = design_sequence(
-                self.designer, model_type, **design_kwargs
+                self.designer,
+                model_type,
+                ligand_gpu_id=self.ligand_gpu_id,
+                **design_kwargs,
             )
             # The output seq_str is a dictionary-like string, we extract the binder chain sequence
             seq = seq_str.split(":")[CHAIN_TO_NUMBER[self.binder_chain]] 
