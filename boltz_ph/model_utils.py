@@ -178,15 +178,22 @@ def extract_sequence_from_structure(pdb_path, chain_id):
         raise ValueError(f"Could not extract sequence from chain {chain_id} in {pdb_path}: {e}") from e
 
 
-def shallow_copy_tensor_dict(d):
-    """Performs a shallow copy of a nested dictionary, cloning only torch.Tensors."""
-    if isinstance(d, dict):
-        return {k: shallow_copy_tensor_dict(v) for k, v in d.items()}
-    if isinstance(d, list):
-        return [shallow_copy_tensor_dict(x) for x in d]
-    if isinstance(d, torch.Tensor):
-        return d.detach().clone()
-    return d
+def shallow_copy_tensor_dict(d, target_device: Optional[str] = "cpu"):
+    """Performs a shallow copy of nested containers, moving tensors off the GPU."""
+
+    def _copy(value):
+        if isinstance(value, dict):
+            return {k: _copy(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_copy(x) for x in value]
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().clone()
+            if target_device:
+                tensor = tensor.to(target_device)
+            return tensor
+        return value
+
+    return _copy(d)
 
 
 def smart_split(s):
@@ -542,17 +549,21 @@ def run_prediction(
     # 4. Move batch to device
     batch = {k: v.unsqueeze(0).to(device) for k, v in batch.items()}
     
-    # 5. Run prediction
-    output = boltz_model.predict_step(
-        batch,
-        batch_idx=0,
-        dataloader_idx=0,
-        randomly_kill_helix_feature=randomly_kill_helix_feature,
-        negative_helix_constant=negative_helix_constant,
-        binder_chain=binder_chain,
-        logmd=logmd,
-        structure=structure,
-    )
+    # 5. Run prediction (GPU) and immediately move tensors off device
+    with torch.inference_mode():
+        output_gpu = boltz_model.predict_step(
+            batch,
+            batch_idx=0,
+            dataloader_idx=0,
+            randomly_kill_helix_feature=randomly_kill_helix_feature,
+            negative_helix_constant=negative_helix_constant,
+            binder_chain=binder_chain,
+            logmd=logmd,
+            structure=structure,
+        )
+
+    output = shallow_copy_tensor_dict(output_gpu, target_device="cpu")
+    del output_gpu
     return output, structure
 
 
@@ -575,6 +586,7 @@ def design_sequence(
     bias_AA="",
     temperature=0.02,
     return_logits=False,
+    ligand_gpu_id=None,
 ):
     """Runs the LigandMPNN (or SolubleMPNN) sequence design wrapper."""
     seq, logits = designer.run(
@@ -589,6 +601,7 @@ def design_sequence(
             "--temperature": temperature,
             "--batch_size": 1,
         },
+        cuda_device=ligand_gpu_id,
     )
     if return_logits:
         return seq, logits

@@ -74,12 +74,26 @@ The design chain is "A" and other target chains are "B", "C", etc.
 - `--af3_hmmer_path`: Path to HMMER
 - `--use_alphafold3_validation`: Add this flag to enable AlphaFold3-based validation. 
 
-## Protein Hunter (Boltz Edition ⚡) 
+## Protein Hunter (Boltz Edition ⚡)
 To use AlphaFold3 validation, make sure your AlphaFold3 Docker is installed, specify the correct AlphaFold3 directory, and turn on `--use_alphafold3_validation`.
 
 
-- **Protein-protein design with all X sequence:**  
-  To design a protein-protein complex using an all-X sequence (i.e., X for every residue, encouraging de novo exploration), run:  
+### VRAM usage and LigandMPNN device control
+
+During each Boltz design cycle the pipeline keeps the Boltz2 diffusion model resident on the GPU **and** spawns Ligand/ProteinMPNN to redesign the binder sequence. By default the LigandMPNN subprocess also detects CUDA and loads its checkpoints on the same GPU, so the memory footprint is roughly the sum of both models. If Boltz already consumes ~24–26 GB this leaves very little headroom on a 32 GB board.
+
+You can now steer the LigandMPNN device with `--ligand_gpu_id`:
+
+- pass another GPU index (e.g. `--ligand_gpu_id 1`) to offload sequence design to a free device
+- pass `--ligand_gpu_id -1` to force LigandMPNN to run on CPU (slower but leaves the full GPU to Boltz)
+
+When you run the local Boltz notebook (`protein_hunter_boltz.ipynb`), edit the configuration cell so `ligand_gpu_id` matches the GPU you want LigandMPNN to use, or set it to `-1` before executing the pipeline to keep the sequence-design stage on CPU RAM.
+
+If the flag is omitted LigandMPNN reuses `--gpu_id`, preserving the previous behaviour.
+
+
+- **Protein-protein design with all X sequence:**
+  To design a protein-protein complex using an all-X sequence (i.e., X for every residue, encouraging de novo exploration), run:
   ```
   python boltz_ph/design.py --num_designs 3 --num_cycles 7 --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --msa_mode "mmseqs" --gpu_id 0 --name PDL1_mix_aa_all_X --percent_X 100 --min_protein_length 90 --max_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
   ```
